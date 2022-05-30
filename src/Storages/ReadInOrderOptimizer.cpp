@@ -8,6 +8,7 @@
 #include <Interpreters/TableJoin.h>
 #include <Parsers/ASTSelectQuery.h>
 #include <Parsers/ASTFunction.h>
+#include "MergeTree/StorageFromMergeTreeDataPart.h"
 
 namespace DB
 {
@@ -153,6 +154,27 @@ int matchSortDescriptionAndKey(
     return current_direction;
 }
 
+std::optional<Names> tryGetSortingKeyColumns(const StoragePtr & storage, const StorageMetadataPtr & metadata_snapshot)
+{
+    Names sorting_key_columns;
+    if (dynamic_cast<const MergeTreeData *>(storage.get()))
+    {
+        if (!metadata_snapshot->hasSortingKey())
+            return {};
+        sorting_key_columns = metadata_snapshot->getSortingKeyColumns();
+    }
+    else if (dynamic_cast<const StorageFromMergeTreeDataPart *>(storage.get()))
+    {
+        if (!metadata_snapshot->hasSortingKey())
+            return {};
+        sorting_key_columns = metadata_snapshot->getSortingKeyColumns();
+    }
+    else /// Inapplicable storage type
+    {
+        return {};
+    }
+    return sorting_key_columns;
+}
 }
 
 ReadInOrderOptimizer::ReadInOrderOptimizer(
@@ -260,4 +282,29 @@ InputOrderInfoPtr ReadInOrderOptimizer::getInputOrder(
     return getInputOrderImpl(metadata_snapshot, required_sort_description, elements_actions, limit);
 }
 
+
+ReadInOrderOptimizerForDistinct::ReadInOrderOptimizerForDistinct(const Names & source_columns_)
+    : source_columns(source_columns_.begin(), source_columns_.end())
+{
+}
+
+InputOrderInfoPtr ReadInOrderOptimizerForDistinct::getInputOrder(const StoragePtr & storage,
+                                                                 const StorageMetadataPtr & metadata_snapshot) const
+{
+    auto sorting_key_object = tryGetSortingKeyColumns(storage, metadata_snapshot);
+    if (!sorting_key_object.has_value())
+        return {};
+
+    Names sorting_key_columns = *sorting_key_object;
+    SortDescription order_key_prefix_descr;
+    for (const auto & sorting_key_column: sorting_key_columns)
+    {
+        if (source_columns.find(sorting_key_column) == source_columns.end())
+            break;
+        order_key_prefix_descr.emplace_back(sorting_key_column, 1, 1);
+    }
+    if (order_key_prefix_descr.empty())
+        return {};
+    return {}; // std::make_shared<InputOrderInfo>(std::move(order_key_prefix_descr), 1);
+}
 }
