@@ -10,8 +10,6 @@ on:  # yamllint disable-line rule:truthy
       - synchronize
       - reopened
       - opened
-    branches:
-      - master
     paths-ignore:
       - 'docker/docs/**'
       - 'docs/**'
